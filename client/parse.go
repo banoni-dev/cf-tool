@@ -32,11 +32,61 @@ func findSample(body []byte) (input [][]byte, output [][]byte, err error) {
 		s := html.UnescapeString(string(src))
 		return []byte(strings.TrimSpace(s) + "\n")
 	}
+package client
+
+import (
+	"bytes"
+	"fmt"
+	"html"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+
+	"github.com/xalanq/cf-tool/util"
+
+	"github.com/k0kubun/go-ansi"
+
+	"github.com/fatih/color"
+)
+
+func findSample(body []byte) (input [][]byte, output [][]byte, err error) {
+	irg := regexp.MustCompile(`class="input"[\s\S]*?<pre>([\s\S]*?)</pre>`)
+	org := regexp.MustCompile(`class="output"[\s\S]*?<pre>([\s\S]*?)</pre>`)
+	a := irg.FindAllSubmatch(body, -1)
+	b := org.FindAllSubmatch(body, -1)
+	if a == nil || b == nil || len(a) != len(b) {
+		return nil, nil, fmt.Errorf("Cannot parse sample with input %v and output %v", len(a), len(b))
+	}
+	newline := regexp.MustCompile(`<[\s/br]+?>`)
+	filter := func(src []byte) []byte {
+		src = newline.ReplaceAll(src, []byte("\n"))
+		s := html.UnescapeString(string(src))
+		return []byte(strings.TrimSpace(s) + "\n")
+	}
 	for i := 0; i < len(a); i++ {
 		input = append(input, filter(a[i][1]))
 		output = append(output, filter(b[i][1]))
 	}
 	return
+}
+
+
+func stripHTMLTags(input string) string {
+	// Split the content by div tags and trim spaces
+	sections := regexp.MustCompile(`(?i)<div[^>]*>`).Split(input, -1)
+	var cleanSections []string
+	for _, section := range sections {
+		// Remove closing </div> tag and trim spaces
+		section = strings.TrimSpace(regexp.MustCompile(`(?i)</div>`).ReplaceAllString(section, ""))
+		if section != "" {
+			cleanSections = append(cleanSections, section)
+		}
+	}
+	// Join the sections with newlines
+	return html.UnescapeString(strings.Join(cleanSections, "\n"))
 }
 
 // ParseProblem parse problem to path. mu can be nil
@@ -64,7 +114,8 @@ func (c *Client) ParseProblem(URL, path string, mu *sync.Mutex) (samples int, st
 	for i := 0; i < len(input); i++ {
 		fileIn := filepath.Join(path, fmt.Sprintf("in%v.txt", i+1))
 		fileOut := filepath.Join(path, fmt.Sprintf("ans%v.txt", i+1))
-		e := ioutil.WriteFile(fileIn, input[i], 0644)
+    cleanInput := stripHTMLTags(string(input[i]))
+		e := ioutil.WriteFile(fileIn, []byte(cleanInput), 0644)
 		if e != nil {
 			if mu != nil {
 				mu.Lock()
